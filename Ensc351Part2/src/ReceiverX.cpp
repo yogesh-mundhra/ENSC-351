@@ -1,18 +1,18 @@
 //============================================================================
 //
-//% Student Name 1: student1
-//% Student 1 #: 123456781
-//% Student 1 userid (email): stu1 (stu1@sfu.ca)
+//% Student Name 1: Benjamin Martin
+//% Student 1 #: 301347720
+//% Student 1 userid (email): bpmartin@sfu.ca (stu1@sfu.ca)
 //
-//% Student Name 2: student2
-//% Student 2 #: 123456782
-//% Student 2 userid (email): stu2 (stu2@sfu.ca)
+//% Student Name 2: Yogesh Mundhra
+//% Student 2 #: 301346798
+//% Student 2 userid (email): ymundhra@sfu.ca (stu2@sfu.ca)
 //
 //% Below, edit to list any people who helped you with the code in this file,
 //%      or put 'None' if nobody helped (the two of) you.
 //
 // Helpers: _everybody helped us/me with the assignment (list names or put 'None')__
-//
+//          Spencer Pauls
 // Also, list any resources beyond the course textbooks and the course pages on Piazza
 // that you used in making your submission.
 //
@@ -39,17 +39,18 @@
 #include "myIO.h"
 #include "ReceiverX.h"
 #include "VNPE.h"
-
+#include <cstdlib>
 //using namespace std;
 
 ReceiverX::
 ReceiverX(int d, const char *fname, bool useCrc)
 :PeerX(d, fname, useCrc), 
 NCGbyte(useCrc ? 'C' : NAK),
-goodBlk(false), 
+goodBlk(false),
 goodBlk1st(false), 
 syncLoss(true),
-numLastGoodBlk(0)
+numLastGoodBlk(0),
+recalcCS(0)
 {
 }
 
@@ -70,16 +71,50 @@ void ReceiverX::receiveFile()
 	while(PE_NOT(myRead(mediumD, rcvBlk, 1), 1), (rcvBlk[0] == SOH))
 	{
 		getRestBlk();
-		sendByte(ACK); // assume the expected block was received correctly.
-		writeChunk();
+		if(syncLoss == true)
+        { //cancel transfer, some sync error in receiving wrong block
+                can8();
+        }
+		else if(goodBlk == false)
+		{ //ask sender to resend byte
+		    sendByte(NAK);
+		}
+		else if(goodBlk == true)
+		{
+		    sendByte(ACK);
+		    if(goodBlk1st)
+		    {
+		        writeChunk();
+		        numLastGoodBlk++;
+		        goodBlk1st = false;
+		    }
+		}
 	};
-	// assume EOT was just read in the condition for the while loop
-	sendByte(NAK); // NAK the first EOT
-	PE_NOT(myRead(mediumD, rcvBlk, 1), 1); // presumably read in another EOT
-	(close(transferringFileD));
-	// check if the file closed properly.  If not, result should be something other than "Done".
-	result = "Done"; //assume the file closed properly.
-	sendByte(ACK); // ACK the second EOT
+	if(rcvBlk[0] == EOT)
+	{
+	    sendByte(NAK); // NAK the first EOT
+	    PE_NOT(myRead(mediumD, rcvBlk, 1), 1);
+	    (close(transferringFileD));
+	    if(rcvBlk[0] == EOT)
+	    {
+	        // check if the file closed properly.  If not, result should be something other than "Done".
+	        result = "Done"; //assume the file closed properly.
+	        sendByte(ACK); // ACK the second EOT
+	    }
+	    else
+	    {
+	        std::cout << "Sender received totally unexpected char #"
+	        << rcvBlk[0] << ":" << (char) rcvBlk[0] << std::endl;
+	    }
+	}
+	else
+	{
+	    can8();
+	    (close(transferringFileD));
+	    result = "EOT not received"; // by us
+	}
+	 // presumably read in another EOT
+
 }
 
 /* Only called after an SOH character has been received.
@@ -91,9 +126,70 @@ time that the block was received in "good" condition.
 */
 void ReceiverX::getRestBlk()
 {
-	// ********* this function must be improved ***********
-	PE_NOT(myReadcond(mediumD, &rcvBlk[1], REST_BLK_SZ_CRC, REST_BLK_SZ_CRC, 0, 0), REST_BLK_SZ_CRC);
-	goodBlk1st = goodBlk = true;
+
+    // ********* this function must be improved ***********
+    if(Crcflg)
+        PE_NOT(myReadcond(mediumD, &rcvBlk[1], REST_BLK_SZ_CRC, REST_BLK_SZ_CRC, 0, 0), REST_BLK_SZ_CRC);
+    else
+        PE_NOT(myReadcond(mediumD, &rcvBlk[1], REST_BLK_SZ_CS, REST_BLK_SZ_CS, 0, 0), REST_BLK_SZ_CS);
+        uint8_t nextGoodBlk= numLastGoodBlk+1;
+        if(rcvBlk[1]+rcvBlk[2]!=255)
+        {
+            goodBlk = false;
+            goodBlk1st = false;
+            syncLoss = false;
+        }
+        else
+        {
+            if((rcvBlk[1]!=nextGoodBlk) && (rcvBlk[1]!=numLastGoodBlk))
+            {
+                syncLoss = true;
+            }
+            else
+            {
+                syncLoss = false;
+                if(Crcflg)
+                {
+                    crc16ns((uint16_t*)&recalcCRC[0], &rcvBlk[DATA_POS]);
+
+                    if(recalcCRC[0]!=rcvBlk[131] || recalcCRC[1]!=rcvBlk[132])
+                    {
+//                        recalcCRC[0] = 0;
+//                        recalcCRC[1] = 0;
+                        goodBlk = goodBlk1st = false;
+                    }
+                    else
+                    {
+                        if(rcvBlk[1]==nextGoodBlk)
+                        {
+                            goodBlk1st = true;
+                        }
+                        goodBlk = true;
+                    }
+                }
+                else if(!Crcflg)
+                { //for checksum
+                   for(int ii=DATA_POS; ii<DATA_POS+CHUNK_SZ; ii++)
+                   {
+                       recalcCS += rcvBlk[ii];
+                   }
+                      if(rcvBlk[PAST_CHUNK]!=recalcCS)
+                      {
+                          recalcCS = 0;
+                          goodBlk = goodBlk1st = false;
+                      }
+                      else
+                      {
+                          recalcCS = 0;
+                          if(rcvBlk[1]==nextGoodBlk)
+                          {
+                              goodBlk1st = true;
+                          }
+                          goodBlk = true;
+                      }
+                }
+            }
+        }
 }
 
 //Write chunk (data) in a received block to disk

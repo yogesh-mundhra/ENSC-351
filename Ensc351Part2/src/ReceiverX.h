@@ -38,7 +38,8 @@ public:
 private:
 	// blkT rcvBlk;		// a received block
 	uint8_t rcvBlk[BLK_SZ_CRC];		// a received block
-
+	uint8_t recalcCS;
+	uint8_t recalcCRC[2];
 	uint8_t numLastGoodBlk; // the number of the last good block
 	// ********** you can add more data members if needed *******
 };

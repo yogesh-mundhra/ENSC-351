@@ -1,18 +1,18 @@
 //============================================================================
 //
-//% Student Name 1: student1
-//% Student 1 #: 123456781
-//% Student 1 userid (email): stu1 (stu1@sfu.ca)
+//% Student Name 1: Benjamin Martin
+//% Student 1 #: 301347720
+//% Student 1 userid (email): bpmartin@sfu.ca (stu1@sfu.ca)
 //
-//% Student Name 2: student2
-//% Student 2 #: 123456782
-//% Student 2 userid (email): stu2 (stu2@sfu.ca)
+//% Student Name 2: Yogesh Mundhra
+//% Student 2 #: 301346798
+//% Student 2 userid (email): ymundhra@sfu.ca (stu2@sfu.ca)
 //
 //% Below, edit to list any people who helped you with the code in this file,
 //%      or put 'None' if nobody helped (the two of) you.
 //
 // Helpers: _everybody helped us/me with the assignment (list names or put 'None')__
-//
+//          Spencer Pauls
 // Also, list any resources beyond the course textbooks and the course pages on Piazza
 // that you used in making your submission.
 //
@@ -36,13 +36,12 @@
 #include <stdint.h> // for uint8_t
 #include <string.h> // for memset()
 #include <fcntl.h>	// for O_RDONLY
-
 #include "myIO.h"
 #include "SenderX.h"
 #include "VNPE.h"
-
+#include <cstdlib>
 using namespace std;
-
+enum  {START, ACKNAK, CANC, EOT1, EOTEOT, ERRSTATE};
 SenderX::SenderX(const char *fname, int d)
 :PeerX(d, fname),
  bytesRd(-1),
@@ -136,15 +135,21 @@ void SenderX::genBlk(blkT blkBuf)
 void SenderX::prep1stBlk()
 {
 	// **** this function will need to be modified ****
-	genBlk(blkBuf);
+	genBlk(blkBufs[0]);
+
 }
 
-/* refit the 1st block with a checksum
-*/
+/* refit the 1st block with a checksum */
 void
 SenderX::
 cs1stBlk()
 {
+    int checksum = 0;
+    for(int i=3;i<131;i++) //changed from 131 to bytesRd
+    {
+       checksum += blkBufs[0][i];
+    }
+    blkBufs[0][131] = checksum % 256;
 	// **** this function will need to be modified ****
 }
 
@@ -153,15 +158,27 @@ cs1stBlk()
 void SenderX::sendBlkPrepNext()
 {
 	// **** this function will need to be modified ****
+    if(Crcflg){
+        for(int i=0; i<BLK_SZ_CRC; i++){
+            blkBufs[1][i] = blkBufs[0][i];
+        }
+    }
+    else{
+        for(int i=0; i<BLK_SZ_CS; i++){
+                blkBufs[1][i] = blkBufs[0][i];
+        }
+    }
 	blkNum ++; // 1st block about to be sent or previous block ACK'd
-	uint8_t lastByte = sendMostBlk(blkBuf);
-	genBlk(blkBuf); // prepare next block
+	uint8_t lastByte = sendMostBlk(blkBufs[0]);
+	genBlk(blkBufs[0]); // prepare next block
 	sendLastByte(lastByte);
 }
 
 // Resends the block that had been sent previously to the xmodem receiver
 void SenderX::resendBlk()
 {
+    uint8_t lastByte = sendMostBlk(blkBufs[1]);
+    sendLastByte(lastByte);
 	// resend the block including the checksum or crc16
 	//  ***** You will have to write this simple function *****
 }
@@ -174,11 +191,17 @@ void SenderX::resendBlk()
 void SenderX::can8()
 {
 	//  ***** You will have to write this simple function *****
+    int our8CanBlk[8];
+    for(int i=0; i<8; i++){
+        our8CanBlk[i] = CAN;
+    }
+    PE_NOT(myWrite(mediumD, our8CanBlk, CAN_LEN), CAN_LEN);
 	// use the C++11/14 standard library to generate the delays
 }
 
-void SenderX::sendFile()
+void SenderX::sendFile() //bookmark
 {
+    int currentState = START;
 	transferringFileD = myOpen(fileName, O_RDONLY, 0);
 	if(transferringFileD == -1) {
 		can8();
@@ -193,20 +216,122 @@ void SenderX::sendFile()
 		// below is just a starting point.  You can follow a
 		// 	different structure if you want.
 		char byteToReceive;
-		PE_NOT(myRead(mediumD, &byteToReceive, 1), 1); // assuming get a 'C'
+		// PE_NOT(myRead(mediumD, &byteToReceive, 1), 1); // assuming get a 'C'
 		Crcflg = true;
-
-		while (bytesRd) {
-			sendBlkPrepNext();
+		errCnt = 0;
+		while (true) {
+		    PE_NOT(myRead(mediumD, &byteToReceive, 1), 1);
+		    switch(currentState){
+		    case 0: //START
+		        if(bytesRd && (byteToReceive == NAK || byteToReceive=='C')){
+		            if (byteToReceive==NAK){
+		                Crcflg=false;
+		                cs1stBlk();
+		                firstCrcBlk=false;
+		            }
+		            sendBlkPrepNext();
+		            currentState = ACKNAK;
+		        }
+		        else if(((byteToReceive == NAK) || (byteToReceive == 'C')) && !bytesRd)
+		           {
+		            if (byteToReceive == NAK) {
+		                firstCrcBlk = false;
+		            }
+		                sendByte(EOT);
+		                currentState = EOT1;
+		           }
+		        else
+		        {
+		            currentState = ERRSTATE;
+		        }
+		        continue;
+		    case 1: //ACKNAK
+		        if(byteToReceive == ACK && bytesRd)
+		        {
+		            sendBlkPrepNext();
+		            errCnt = 0;
+		            firstCrcBlk=false;
+		        }
+		        else if((byteToReceive == NAK || (byteToReceive == 'C' && firstCrcBlk)) && (errCnt < errB))
+		        {
+		            resendBlk();
+		            errCnt++;
+		        }
+		        else if(byteToReceive == CAN)
+		        {
+		            currentState = CANC;
+		        }
+		        else if(byteToReceive == ACK && !bytesRd){
+		            sendByte(EOT);
+		            errCnt = 0;
+		            firstCrcBlk = false;
+		            currentState = EOT1;
+		        }
+		        else
+		        {
+		            currentState = ERRSTATE;
+		        }
+		        continue;
+		    case 2: //CANC
+		        if(byteToReceive == CAN){
+		            result = "RcvCancelled";
+		           /* clearCan(); */
+		        }
+		        else{
+		            currentState = ERRSTATE;
+		        }
+		       continue;
+		    case 3: //EOT1
+		        if(byteToReceive == NAK){
+		            sendByte(EOT);
+		            currentState = EOTEOT;
+		        }
+		        else if(byteToReceive == ACK){
+		            result = "1st EOT ACK'd";
+		            return;
+		        }
+		        else{
+		            currentState =  ERRSTATE;
+		        }
+		        continue;
+		    case 4: // EOTEOT
+		        if(byteToReceive == NAK && errCnt < errB){ //redundant if the while statement is changed
+		            sendByte(EOT);
+		            errCnt++;
+		            continue;
+		        }
+		        else if(byteToReceive == 'C'){
+		            can8();
+		            result="UnexpectedC";
+		            return;
+		        }
+		        else if(byteToReceive == ACK){
+		            result = "Done";
+		            return;
+		        }
+		        else{
+		            currentState = ERRSTATE;
+		        }
+		        continue;
+		    case 5: //ERRSTATE
+		        if(byteToReceive != NAK){
+		            cout << "Sender received totally unexpected char #"
+		                    << byteToReceive << ":" << (char) byteToReceive << endl;
+		        exit(EXIT_FAILURE);
+		        }
+		        else{
+		            can8();
+		            result = "ExcessiveNAKs";
+		        }
+		    }
+			// sendBlkPrepNext();
 			// assuming below we get an ACK
-			PE_NOT(myRead(mediumD, &byteToReceive, 1), 1);
 		}
-		sendByte(EOT); // send the first EOT
-		PE_NOT(myRead(mediumD, &byteToReceive, 1), 1); // assuming get a NAK
-		sendByte(EOT); // send the second EOT
-		PE_NOT(myRead(mediumD, &byteToReceive, 1), 1); // assuming get an ACK
-		result = "Done";
-
+//		sendByte(EOT); // send the first EOT
+//		PE_NOT(myRead(mediumD, &byteToReceive, 1), 1); // assuming get a NAK
+//		sendByte(EOT); // send the second EOT
+//		PE_NOT(myRead(mediumD, &byteToReceive, 1), 1); // assuming get an ACK
+//		result = "Done";
 		PE(myClose(transferringFileD));
 		/*
 		if (-1 == myClose(transferringFileD))
