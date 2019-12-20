@@ -1,10 +1,10 @@
-//% Student Name 1: Benjamin Patrick Martin
-//% Student 1 #: 301347720
-//% Student 1 userid (email): bpmartin
+//% Student Name 1: Benjamin Martin
+//% Student 1 #: 3********
+//% Student 1 userid (email): bpmartin (at) sfu.ca (stu1@sfu.ca)
 //
 //% Student Name 2: Yogesh Mundhra
-//% Student 2 #: 301346798
-//% Student 2 userid (email): ymundhra
+//% Student 2 #: 3********
+//% Student 2 userid (email): ymundhra (at) sfu.ca (stu2@sfu.ca)
 //
 //% Below, edit to list any people who helped you with the code in this file,
 //%      or put 'None' if nobody helped (the two of) you.
